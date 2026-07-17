@@ -75,8 +75,12 @@ The pipeline follows a standard streaming architecture:
 4.  **Run the Pipeline**:
     * Start the data ingestion from Reddit:
         ```bash
-        python src/ingestion/reddit_producer.py
+        python reddit_producer.py
         ```
+        (Note: the layout diagram above describes the target
+        `src/ingestion/...` structure; `reddit_producer.py` currently
+        lives at the repo root, so run it from there until the
+        `src/` reorg lands.)
     * Submit the Spark processing job:
         ```bash
         # (Command to submit spark job, see official docs)
