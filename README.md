@@ -30,6 +30,12 @@ The core objective is to perform real-time trend identification (e.g., sentiment
 
 ### 🏛️ Architecture
 
+> **Status:** Only the ingestion stage (`reddit_producer.py`) and the
+> Kafka/Zookeeper/Spark infrastructure (`docker-compose.yml`) are
+> implemented in this repo right now. The processing (Spark job),
+> S3 storage, and SQL analysis pieces described below are the target
+> design for this project and are not yet built -- there is currently
+> no `src/processing/`, `src/cpp_module/`, or `sql/` in this repo.
 
 The pipeline follows a standard streaming architecture:
 
@@ -59,7 +65,8 @@ The pipeline follows a standard streaming architecture:
     * AWS Account with an S3 bucket and credentials configured
     * Reddit API credentials
 
-2.  **Build the C++ Module**:
+2.  **Build the C++ Module** *(not yet implemented -- `src/cpp_module/`
+    doesn't exist in this repo yet; skip this step for now)*:
     ```bash
     pip install pybind11
     cd src/cpp_module
@@ -81,7 +88,9 @@ The pipeline follows a standard streaming architecture:
         `src/ingestion/...` structure; `reddit_producer.py` currently
         lives at the repo root, so run it from there until the
         `src/` reorg lands.)
-    * Submit the Spark processing job:
+    * Submit the Spark processing job *(not yet implemented --
+      `src/processing/spark_streaming_analysis.py` doesn't exist in
+      this repo yet, so this command won't work as-is)*:
         ```bash
         # (Command to submit spark job, see official docs)
         spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0 src/processing/spark_streaming_analysis.py
