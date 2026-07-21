@@ -59,6 +59,24 @@ reddit = praw.Reddit(
     user_agent=USER_AGENT
 )
 
+def _on_send_error(comment_id):
+    """Errback for producer.send()'s returned future.
+
+    KafkaProducer.send() is async: it enqueues the message and returns a
+    FutureRecordMetadata immediately, so a broker-side failure (topic
+    down, message too large, leader not available, etc.) never raises
+    from the send() call itself and was previously never surfaced
+    anywhere -- the try/except around send() only ever caught
+    synchronous errors (e.g. serialization failures before the message
+    was even queued). Without this errback, delivery failures were
+    silently dropped with a misleading "Sent comment ... to Kafka" log
+    line still printed right after the send() call.
+    """
+    def _callback(excp):
+        print(f"Failed to deliver comment {comment_id} to Kafka: {excp}")
+    return _callback
+
+
 print("Connected to Reddit API. Streaming comments...")
 
 # Stream comments from a popular subreddit like 'all'
@@ -73,9 +91,13 @@ for comment in reddit.subreddit('all').stream.comments(skip_existing=True):
             'created_utc': comment.created_utc
         }
 
-        # Send to Kafka
-        producer.send(KAFKA_TOPIC, value=message)
-        print(f"Sent comment {comment.id} to Kafka.")
+        # Send to Kafka. producer.send() only queues the message; actual
+        # delivery success/failure is reported asynchronously, so attach
+        # an errback rather than trusting that no exception means it
+        # was delivered.
+        future = producer.send(KAFKA_TOPIC, value=message)
+        future.add_errback(_on_send_error(comment.id))
+        print(f"Queued comment {comment.id} for Kafka.")
 
     except Exception as e:
         print(f"An error occurred: {e}")
