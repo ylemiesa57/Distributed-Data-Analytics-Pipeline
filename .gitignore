@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Environments (Reddit/AWS credentials are read from env vars per the
+# README's "use environment variables for credentials" convention)
+.env
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
