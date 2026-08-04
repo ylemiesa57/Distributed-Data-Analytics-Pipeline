@@ -48,17 +48,6 @@ def connect_kafka_producer():
     ) from last_error
 
 
-# --- Kafka Producer Setup ---
-# Serializes messages as JSON
-producer = connect_kafka_producer()
-
-# --- Reddit API Connection ---
-reddit = praw.Reddit(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    user_agent=USER_AGENT
-)
-
 def _on_send_error(comment_id):
     """Errback for producer.send()'s returned future.
 
@@ -77,39 +66,55 @@ def _on_send_error(comment_id):
     return _callback
 
 
-print("Connected to Reddit API. Streaming comments...")
+def main():
+    # --- Kafka Producer Setup ---
+    # Serializes messages as JSON
+    producer = connect_kafka_producer()
 
-# Stream comments from a popular subreddit like 'all'. Wrapped in
-# try/finally so that Ctrl+C (the documented way to stop this
-# indefinitely-running script) doesn't just kill the process outright:
-# producer.send() only queues messages in an in-memory buffer, so any
-# comments queued but not yet flushed to the broker at the moment of
-# interrupt were previously silently lost with no delivery attempt at
-# all, rather than just missing the errback's failure log.
-try:
-    for comment in reddit.subreddit('all').stream.comments(skip_existing=True):
-        try:
-            # Construct the message payload
-            message = {
-                'id': comment.id,
-                'author': str(comment.author),
-                'body': comment.body,
-                'subreddit': str(comment.subreddit.display_name),
-                'created_utc': comment.created_utc
-            }
+    # --- Reddit API Connection ---
+    reddit = praw.Reddit(
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        user_agent=USER_AGENT
+    )
 
-            # Send to Kafka. producer.send() only queues the message; actual
-            # delivery success/failure is reported asynchronously, so attach
-            # an errback rather than trusting that no exception means it
-            # was delivered.
-            future = producer.send(KAFKA_TOPIC, value=message)
-            future.add_errback(_on_send_error(comment.id))
-            print(f"Queued comment {comment.id} for Kafka.")
+    print("Connected to Reddit API. Streaming comments...")
 
-        except Exception as e:
-            print(f"An error occurred: {e}")
-except KeyboardInterrupt:
-    print("Interrupted. Flushing any comments still queued for Kafka before exiting...")
-finally:
-    producer.flush(timeout=10)
-    producer.close(timeout=10)
+    # Stream comments from a popular subreddit like 'all'. Wrapped in
+    # try/finally so that Ctrl+C (the documented way to stop this
+    # indefinitely-running script) doesn't just kill the process outright:
+    # producer.send() only queues messages in an in-memory buffer, so any
+    # comments queued but not yet flushed to the broker at the moment of
+    # interrupt were previously silently lost with no delivery attempt at
+    # all, rather than just missing the errback's failure log.
+    try:
+        for comment in reddit.subreddit('all').stream.comments(skip_existing=True):
+            try:
+                # Construct the message payload
+                message = {
+                    'id': comment.id,
+                    'author': str(comment.author),
+                    'body': comment.body,
+                    'subreddit': str(comment.subreddit.display_name),
+                    'created_utc': comment.created_utc
+                }
+
+                # Send to Kafka. producer.send() only queues the message; actual
+                # delivery success/failure is reported asynchronously, so attach
+                # an errback rather than trusting that no exception means it
+                # was delivered.
+                future = producer.send(KAFKA_TOPIC, value=message)
+                future.add_errback(_on_send_error(comment.id))
+                print(f"Queued comment {comment.id} for Kafka.")
+
+            except Exception as e:
+                print(f"An error occurred: {e}")
+    except KeyboardInterrupt:
+        print("Interrupted. Flushing any comments still queued for Kafka before exiting...")
+    finally:
+        producer.flush(timeout=10)
+        producer.close(timeout=10)
+
+
+if __name__ == "__main__":
+    main()
