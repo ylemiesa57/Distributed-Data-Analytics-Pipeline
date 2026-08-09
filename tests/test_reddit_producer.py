@@ -76,5 +76,108 @@ class TestOnSendErrorCallback(unittest.TestCase):
         self.assertIn("bbb", second_call[0][0])
 
 
+class TestMain(unittest.TestCase):
+    """main()'s per-comment streaming loop had no coverage at all: message
+    construction from the comment object, the inner per-comment try/except,
+    and the outer KeyboardInterrupt handling that's supposed to still flush
+    and close the producer. All exercised here via mocks -- no live Kafka
+    broker or Reddit credentials needed.
+    """
+
+    def _make_comment(self, comment_id, author="alice", body="hello",
+                       subreddit_name="python", created_utc=1700000000.0):
+        comment = mock.Mock()
+        comment.id = comment_id
+        comment.author = author
+        comment.body = body
+        comment.subreddit.display_name = subreddit_name
+        comment.created_utc = created_utc
+        return comment
+
+    def _patch_main(self, comments_or_exc):
+        """Patch connect_kafka_producer and praw.Reddit so main() streams
+        the given comments (or raises the given exception mid-stream) from
+        reddit.subreddit('all').stream.comments(...), and return the mock
+        producer used so assertions can inspect calls made against it.
+        """
+        producer = mock.Mock()
+        producer.send.return_value = mock.Mock()
+
+        def comment_stream(**kwargs):
+            if isinstance(comments_or_exc, BaseException):
+                raise comments_or_exc
+            yield from comments_or_exc
+
+        reddit = mock.Mock()
+        reddit.subreddit.return_value.stream.comments.side_effect = comment_stream
+
+        connect_patch = mock.patch.object(
+            rp, "connect_kafka_producer", return_value=producer
+        )
+        reddit_patch = mock.patch.object(rp.praw, "Reddit", return_value=reddit)
+        return producer, connect_patch, reddit_patch
+
+    def test_sends_each_comment_and_flushes_on_normal_completion(self):
+        comments = [self._make_comment("c1"), self._make_comment("c2")]
+        producer, connect_patch, reddit_patch = self._patch_main(comments)
+        with connect_patch, reddit_patch:
+            rp.main()
+
+        self.assertEqual(producer.send.call_count, 2)
+        first_call, second_call = producer.send.call_args_list
+        self.assertEqual(first_call.args[0], rp.KAFKA_TOPIC)
+        self.assertEqual(
+            first_call.kwargs["value"],
+            {
+                "id": "c1",
+                "author": "alice",
+                "body": "hello",
+                "subreddit": "python",
+                "created_utc": 1700000000.0,
+            },
+        )
+        self.assertEqual(second_call.kwargs["value"]["id"], "c2")
+        # Both sent futures got an errback attached.
+        self.assertEqual(producer.send.return_value.add_errback.call_count, 2)
+        producer.flush.assert_called_once_with(timeout=10)
+        producer.close.assert_called_once_with(timeout=10)
+
+    def test_per_comment_exception_does_not_abort_the_stream(self):
+        good_comment = self._make_comment("c_ok")
+        bad_comment = self._make_comment("c_bad")
+        # str(comment.subreddit.display_name) raising simulates a payload
+        # construction failure for one comment (e.g. a transient API/attr
+        # error), which should be caught and logged per-comment rather than
+        # killing the whole streaming loop.
+        type(bad_comment.subreddit).display_name = mock.PropertyMock(
+            side_effect=RuntimeError("boom")
+        )
+        producer, connect_patch, reddit_patch = self._patch_main(
+            [bad_comment, good_comment]
+        )
+        with connect_patch, reddit_patch:
+            rp.main()
+
+        # Only the good comment made it to producer.send; the bad one was
+        # caught and logged, and the loop continued to the next comment.
+        self.assertEqual(producer.send.call_count, 1)
+        self.assertEqual(producer.send.call_args.kwargs["value"]["id"], "c_ok")
+        producer.flush.assert_called_once_with(timeout=10)
+        producer.close.assert_called_once_with(timeout=10)
+
+    def test_keyboard_interrupt_still_flushes_and_closes_producer(self):
+        producer, connect_patch, reddit_patch = self._patch_main(
+            KeyboardInterrupt()
+        )
+        with connect_patch, reddit_patch:
+            # Should not propagate -- main() catches KeyboardInterrupt itself
+            # so Ctrl+C exits cleanly rather than printing a traceback.
+            rp.main()
+
+        producer.send.assert_not_called()
+        producer.flush.assert_called_once_with(timeout=10)
+        producer.close.assert_called_once_with(timeout=10)
+
+
 if __name__ == "__main__":
     unittest.main()
