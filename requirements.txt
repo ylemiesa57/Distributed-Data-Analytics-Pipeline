@@ -1,2 +1,2 @@
-praw
-kafka-python
+praw==8.0.3
+kafka-python==3.0.10
