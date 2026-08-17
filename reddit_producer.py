@@ -1,22 +1,24 @@
-import praw
-from kafka import KafkaProducer
-from kafka.errors import KafkaError
 import json
 import os
 import time
+from typing import Callable, Optional
+
+import praw
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
 
 # --- Configuration ---
 # It's best practice to use environment variables for credentials
-CLIENT_ID = os.environ.get('REDDIT_CLIENT_ID')
-CLIENT_SECRET = os.environ.get('REDDIT_CLIENT_SECRET')
-USER_AGENT = "MyDataPipeline/1.0"
-KAFKA_TOPIC = 'reddit_comments'
-KAFKA_SERVER = 'localhost:9092'
-KAFKA_CONNECT_RETRIES = 5
-KAFKA_CONNECT_RETRY_DELAY_SECONDS = 5
+CLIENT_ID: Optional[str] = os.environ.get('REDDIT_CLIENT_ID')
+CLIENT_SECRET: Optional[str] = os.environ.get('REDDIT_CLIENT_SECRET')
+USER_AGENT: str = "MyDataPipeline/1.0"
+KAFKA_TOPIC: str = 'reddit_comments'
+KAFKA_SERVER: str = 'localhost:9092'
+KAFKA_CONNECT_RETRIES: int = 5
+KAFKA_CONNECT_RETRY_DELAY_SECONDS: int = 5
 
 
-def connect_kafka_producer():
+def connect_kafka_producer() -> KafkaProducer:
     """Connect to Kafka with a short retry loop.
 
     docker-compose up -d returns as soon as the kafka container starts,
@@ -26,7 +28,7 @@ def connect_kafka_producer():
     of what to do about it. Retrying a few times with a delay covers that
     startup race without masking a genuinely misconfigured/absent broker.
     """
-    last_error = None
+    last_error: Optional[KafkaError] = None
     for attempt in range(1, KAFKA_CONNECT_RETRIES + 1):
         try:
             return KafkaProducer(
@@ -48,7 +50,7 @@ def connect_kafka_producer():
     ) from last_error
 
 
-def _on_send_error(comment_id):
+def _on_send_error(comment_id: str) -> Callable[[Optional[Exception]], None]:
     """Errback for producer.send()'s returned future.
 
     KafkaProducer.send() is async: it enqueues the message and returns a
@@ -61,18 +63,18 @@ def _on_send_error(comment_id):
     silently dropped with a misleading "Sent comment ... to Kafka" log
     line still printed right after the send() call.
     """
-    def _callback(excp):
+    def _callback(excp: Optional[Exception]) -> None:
         print(f"Failed to deliver comment {comment_id} to Kafka: {excp}")
     return _callback
 
 
-def main():
+def main() -> None:
     # --- Kafka Producer Setup ---
     # Serializes messages as JSON
-    producer = connect_kafka_producer()
+    producer: KafkaProducer = connect_kafka_producer()
 
     # --- Reddit API Connection ---
-    reddit = praw.Reddit(
+    reddit: praw.Reddit = praw.Reddit(
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
         user_agent=USER_AGENT
@@ -91,7 +93,7 @@ def main():
         for comment in reddit.subreddit('all').stream.comments(skip_existing=True):
             try:
                 # Construct the message payload
-                message = {
+                message: dict[str, object] = {
                     'id': comment.id,
                     'author': str(comment.author),
                     'body': comment.body,
