@@ -68,7 +68,39 @@ def _on_send_error(comment_id: str) -> Callable[[Optional[Exception]], None]:
     return _callback
 
 
+def validate_required_env_vars() -> None:
+    """Validate that required environment variables are set.
+
+    Raises SystemExit if CLIENT_ID or CLIENT_SECRET are not configured,
+    with a clear error message guiding the user to set them.
+    """
+    missing_vars = []
+    if not CLIENT_ID:
+        missing_vars.append('REDDIT_CLIENT_ID')
+    if not CLIENT_SECRET:
+        missing_vars.append('REDDIT_CLIENT_SECRET')
+
+    if missing_vars:
+        raise SystemExit(
+            f"Missing required environment variables: {', '.join(missing_vars)}\n"
+            "Please set these variables before running this script. "
+            "See the README for instructions on obtaining Reddit API credentials."
+        )
+
+
 def main() -> None:
+    """Stream Reddit comments and publish them to Kafka.
+
+    Connects to the Reddit API, streams comments from r/all, constructs
+    JSON messages containing comment metadata, and publishes them to a
+    Kafka topic. Handles connection retries, delivery errors, and graceful
+    shutdown (Ctrl+C) by flushing any queued messages before closing.
+
+    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables.
+    """
+    # --- Validate Configuration ---
+    validate_required_env_vars()
+
     # --- Kafka Producer Setup ---
     # Serializes messages as JSON
     producer: KafkaProducer = connect_kafka_producer()

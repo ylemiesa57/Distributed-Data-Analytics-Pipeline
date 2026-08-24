@@ -52,6 +52,37 @@ class TestConnectKafkaProducer(unittest.TestCase):
         self.assertIs(ctx.exception.__cause__, original_error)
 
 
+class TestValidateRequiredEnvVars(unittest.TestCase):
+    def test_no_error_when_both_vars_set(self):
+        # Test that validation passes when credentials are set
+        with mock.patch.object(rp, "CLIENT_ID", "test_id"), \
+             mock.patch.object(rp, "CLIENT_SECRET", "test_secret"):
+            # Should not raise
+            rp.validate_required_env_vars()
+
+    def test_raises_when_client_id_missing(self):
+        with mock.patch.object(rp, "CLIENT_ID", None), \
+             mock.patch.object(rp, "CLIENT_SECRET", "test_secret"):
+            with self.assertRaises(SystemExit) as ctx:
+                rp.validate_required_env_vars()
+            self.assertIn("REDDIT_CLIENT_ID", str(ctx.exception))
+
+    def test_raises_when_client_secret_missing(self):
+        with mock.patch.object(rp, "CLIENT_ID", "test_id"), \
+             mock.patch.object(rp, "CLIENT_SECRET", None):
+            with self.assertRaises(SystemExit) as ctx:
+                rp.validate_required_env_vars()
+            self.assertIn("REDDIT_CLIENT_SECRET", str(ctx.exception))
+
+    def test_raises_when_both_missing(self):
+        with mock.patch.object(rp, "CLIENT_ID", None), \
+             mock.patch.object(rp, "CLIENT_SECRET", None):
+            with self.assertRaises(SystemExit) as ctx:
+                rp.validate_required_env_vars()
+            self.assertIn("REDDIT_CLIENT_ID", str(ctx.exception))
+            self.assertIn("REDDIT_CLIENT_SECRET", str(ctx.exception))
+
+
 class TestOnSendErrorCallback(unittest.TestCase):
     def test_callback_prints_the_comment_id_and_exception(self):
         callback = rp._on_send_error("abc123")
@@ -115,12 +146,13 @@ class TestMain(unittest.TestCase):
             rp, "connect_kafka_producer", return_value=producer
         )
         reddit_patch = mock.patch.object(rp.praw, "Reddit", return_value=reddit)
-        return producer, connect_patch, reddit_patch
+        validate_patch = mock.patch.object(rp, "validate_required_env_vars")
+        return producer, connect_patch, reddit_patch, validate_patch
 
     def test_sends_each_comment_and_flushes_on_normal_completion(self):
         comments = [self._make_comment("c1"), self._make_comment("c2")]
-        producer, connect_patch, reddit_patch = self._patch_main(comments)
-        with connect_patch, reddit_patch:
+        producer, connect_patch, reddit_patch, validate_patch = self._patch_main(comments)
+        with connect_patch, reddit_patch, validate_patch:
             rp.main()
 
         self.assertEqual(producer.send.call_count, 2)
@@ -152,10 +184,10 @@ class TestMain(unittest.TestCase):
         type(bad_comment.subreddit).display_name = mock.PropertyMock(
             side_effect=RuntimeError("boom")
         )
-        producer, connect_patch, reddit_patch = self._patch_main(
+        producer, connect_patch, reddit_patch, validate_patch = self._patch_main(
             [bad_comment, good_comment]
         )
-        with connect_patch, reddit_patch:
+        with connect_patch, reddit_patch, validate_patch:
             rp.main()
 
         # Only the good comment made it to producer.send; the bad one was
@@ -166,10 +198,10 @@ class TestMain(unittest.TestCase):
         producer.close.assert_called_once_with(timeout=10)
 
     def test_keyboard_interrupt_still_flushes_and_closes_producer(self):
-        producer, connect_patch, reddit_patch = self._patch_main(
+        producer, connect_patch, reddit_patch, validate_patch = self._patch_main(
             KeyboardInterrupt()
         )
-        with connect_patch, reddit_patch:
+        with connect_patch, reddit_patch, validate_patch:
             # Should not propagate -- main() catches KeyboardInterrupt itself
             # so Ctrl+C exits cleanly rather than printing a traceback.
             rp.main()
